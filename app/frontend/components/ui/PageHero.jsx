@@ -4,8 +4,8 @@ import { Section } from "./Section";
 export function PageHero({ eyebrow, title, goldWord, subtitle, crumb }) {
   return (
     <Section border={false} className="page-hero !py-0 !pt-36 !pb-14" orbs={[
-      { tone: "gold", size: 500, top: "-20%", left: "20%", depth: 15, opacity: 0.3 },
-      { tone: "violet", size: 400, top: "-5%", right: "5%", depth: -12, opacity: 0.26, delay: "1.5s" },
+      { tone: "gold", size: 340, top: "-15%", left: "30%", depth: 15 },
+      { tone: "violet", size: 260, top: "0%", right: "15%", depth: -12, delay: "1.5s" },
     ]}>
       <div className="max-w-4xl mx-auto text-center">
         <div className="breadcrumb justify-center mb-5 fade-up delay-1">

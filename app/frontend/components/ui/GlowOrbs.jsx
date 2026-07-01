@@ -14,8 +14,8 @@ const TONE_VARS = {
 };
 
 const DEFAULT_ORBS = [
-  { tone: "gold", size: 480, top: "15%", left: "8%", depth: 30, opacity: 0.28 },
-  { tone: "violet", size: 420, bottom: "10%", right: "8%", depth: -22, opacity: 0.24, delay: "2s" },
+  { tone: "gold", size: 360, top: "20%", left: "12%", depth: 30 },
+  { tone: "violet", size: 320, bottom: "15%", right: "12%", depth: -22, delay: "2s" },
 ];
 
 export function GlowOrbs({ orbs = DEFAULT_ORBS }) {
