@@ -1,0 +1,516 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------------------------------------------------------
+// NOTE ON ENUMS: intentionally not using Postgres enums anywhere in this
+// schema. Plain `String` fields are used instead (with the valid values
+// documented in a comment above each field). Reasoning:
+//  - Adding/renaming a value in a Postgres enum requires a migration
+//    (ALTER TYPE ... ADD VALUE, and renames are even messier); a String
+//    value is just a row of data.
+//  - Keeps things consistent with how categories/statuses are already
+//    stored as data rows elsewhere in this schema (e.g. ProjectCategory,
+//    FaqCategory) rather than hardcoded types.
+//  - Slight tradeoff: DB-level validation is gone, so invalid values are
+//    only caught at the application layer (loaders/actions) — acceptable
+//    here since this is a small, single-app schema, not a shared DB.
+// ----------------------------------------------------------------------------
+
+// ============================================================================
+// AUTH — Users, Sessions, Password Reset
+// ============================================================================
+
+model User {
+  id       String @id @default(cuid())
+  name     String
+  email    String @unique
+  password String // hashed (bcrypt/argon2) — never store plaintext
+
+  // "admin" (portfolio owner, manages content) | "customer" (visitor with an account)
+  role String @default("customer")
+
+  avatar        String?
+  phone         String?
+  emailVerified Boolean @default(false)
+
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  contactSubmissions  ContactSubmission[] // inquiries this user has submitted, if logged in
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique // random session token, stored in an httpOnly cookie
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// ============================================================================
+// SITE CONFIG (singleton) + SOCIALS
+// ============================================================================
+
+model Site {
+  id        String   @id @default("main") // fixed id -> always exactly one row
+  name      String
+  title     String
+  email     String
+  whatsapp  String?
+  location  String?
+  bio       String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@map("site")
+}
+
+model SocialLink {
+  id        String   @id @default(cuid())
+  label     String // "GitHub", "LinkedIn", "Dribbble"
+  href      String
+  icon      String   @db.Text // svg path data
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@map("social_links")
+}
+
+// ============================================================================
+// PROJECTS
+// ============================================================================
+
+model ProjectCategory {
+  id       String    @id @default(cuid())
+  key      String    @unique // "shopify", "react", "app" -> used in ?filter=
+  label    String
+  order    Int       @default(0)
+  projects Project[] @relation("ProjectToCategory")
+
+  @@map("project_categories")
+}
+
+model Tag {
+  id       String    @id @default(cuid())
+  name     String    @unique // "Next.js", "Tailwind CSS", "Prisma"...
+  projects Project[] @relation("ProjectToTag")
+
+  @@map("tags")
+}
+
+model Project {
+  id      String  @id @default(cuid())
+  slug    String  @unique
+  title   String
+  desc    String // short card description
+  summary String? @db.Text
+  image   String // cover image url
+
+  // case-study body (optional — cards without these render a simpler "Overview" section)
+  client            String?
+  year              String?
+  role              String?
+  timeline          String?
+  brief             String?  @db.Text
+  whatIBuilt        String?  @db.Text
+  technicalApproach String?  @db.Text
+  result            String?  @db.Text
+  keyFeatures       String[] // bullet list; simple enough not to normalize yet
+
+  featured  Boolean @default(false)
+  published Boolean @default(true)
+  order     Int     @default(0)
+
+  categories ProjectCategory[] @relation("ProjectToCategory")
+  tags       Tag[]             @relation("ProjectToTag")
+  images     ProjectImage[] // gallery, future-proofing beyond single cover image
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published, order])
+  @@map("projects")
+}
+
+model ProjectImage {
+  id        String  @id @default(cuid())
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  url       String
+  alt       String?
+  order     Int     @default(0)
+
+  @@index([projectId])
+  @@map("project_images")
+}
+
+// ============================================================================
+// BLOG
+// ============================================================================
+
+model BlogCategory {
+  id    String     @id @default(cuid())
+  key   String     @unique // "shopify", "react", "devops"
+  label String
+  order Int        @default(0)
+  posts BlogPost[]
+
+  @@map("blog_categories")
+}
+
+model BlogPost {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  title     String
+  desc      String
+  image     String
+  readTime  String? // could be computed later; kept editable for now
+  featured  Boolean @default(false)
+  published Boolean @default(true)
+
+  // Preserves the existing frontend shape: [{ type: "p"|"h2"|"ul"|"code", text, items }]
+  // Keeping it as Json avoids a rewrite of ArticleBlock on the frontend, while
+  // still letting each block type evolve independently later.
+  content Json
+
+  category   BlogCategory @relation(fields: [categoryId], references: [id])
+  categoryId String
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([published, publishedAt])
+  @@map("blog_posts")
+}
+
+// ============================================================================
+// TESTIMONIALS + STATS
+// ============================================================================
+
+model Testimonial {
+  id        String   @id @default(cuid())
+  quote     String   @db.Text
+  name      String
+  role      String
+  avatar    String?
+  published Boolean  @default(true)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@map("testimonials")
+}
+
+model Stat {
+  id       String  @id @default(cuid())
+  key      String  @unique // "avg_rating", "projects_delivered", ...
+  target   Float
+  decimals Int     @default(0)
+  suffix   String? // "/5", "+", "%"
+  label    String
+  order    Int     @default(0)
+
+  @@map("stats")
+}
+
+// ============================================================================
+// SERVICES
+// ============================================================================
+
+model Service {
+  id    String @id @default(cuid())
+  slug  String @unique // matches the #anchor used in href
+  num   String // "01".."06" — display order label, kept as string to match design
+  title String
+  desc  String @db.Text
+  icon  String @db.Text // svg path/fragment
+  order Int    @default(0)
+
+  // Detail-page-only fields (all optional — a service can exist without a full detail block)
+  timeline String?
+  ctaLabel String?
+  stack    String[] // short tech stack chips, e.g. ["Liquid", "Shopify 2.0"]
+
+  features ServiceFeature[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("services")
+}
+
+model ServiceFeature {
+  id        String  @id @default(cuid())
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId String
+  label     String
+  order     Int     @default(0)
+
+  @@index([serviceId])
+  @@map("service_features")
+}
+
+// ============================================================================
+// FAQ
+// ============================================================================
+
+model FaqCategory {
+  id    String @id @default(cuid())
+  key   String @unique // "process", "pricing", "technical", "support"
+  label String
+  order Int    @default(0)
+  faqs  Faq[]
+
+  @@map("faq_categories")
+}
+
+model Faq {
+  id         String      @id @default(cuid())
+  question   String
+  answer     String      @db.Text
+  category   FaqCategory @relation(fields: [categoryId], references: [id])
+  categoryId String
+  homepage   Boolean     @default(false) // show in the Home page preview (first 8, currently)
+  order      Int         @default(0)
+  createdAt  DateTime    @default(now())
+
+  @@index([categoryId])
+  @@map("faqs")
+}
+
+// ============================================================================
+// SKILLS + TOOLS
+// ============================================================================
+
+model SkillCategory {
+  id     String  @id @default(cuid())
+  key    String  @unique // "shopify", "frontend", "backend", "tools"
+  label  String
+  order  Int     @default(0)
+  skills Skill[] @relation("SkillToCategory")
+
+  @@map("skill_categories")
+}
+
+model Skill {
+  id         String          @id @default(cuid())
+  name       String          @unique
+  value      Int // 0-100 proficiency
+  order      Int             @default(0)
+  categories SkillCategory[] @relation("SkillToCategory")
+
+  @@map("skills")
+}
+
+model Tool {
+  id    String @id @default(cuid())
+  name  String @unique
+  icon  String @db.Text // svg path
+  order Int    @default(0)
+
+  @@map("tools")
+}
+
+// ============================================================================
+// EXPERIENCE + EDUCATION
+// ============================================================================
+
+model Experience {
+  id           String                @id @default(cuid())
+  title        String
+  company      String
+  location     String?
+  startDate    DateTime
+  endDate      DateTime? // null = current
+  current      Boolean               @default(false)
+  desc         String                @db.Text
+  order        Int                   @default(0)
+  achievements ExperienceHighlight[]
+  tags         String[] // tech tags shown as chips
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("experience")
+}
+
+model ExperienceHighlight {
+  id           String     @id @default(cuid())
+  experience   Experience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+  experienceId String
+  text         String
+  order        Int        @default(0)
+
+  @@index([experienceId])
+  @@map("experience_highlights")
+}
+
+model Education {
+  id     String @id @default(cuid())
+  title  String
+  org    String
+  period String // kept as free text ("2018 — 2022") to match existing display; can split to dates later
+  icon   String @db.Text
+  order  Int    @default(0)
+
+  @@map("education")
+}
+
+// ============================================================================
+// RESUME (mostly derived from other tables, but a few resume-only fields)
+// ============================================================================
+
+model Resume {
+  id         String   @id @default("main") // singleton
+  summary    String   @db.Text
+  websites   String[]
+  references String?  @db.Text
+  updatedAt  DateTime @updatedAt
+
+  languages    ResumeLanguage[]
+  tools        ResumeTool[]
+  achievements ResumeAchievement[]
+
+  @@map("resume")
+}
+
+model ResumeLanguage {
+  id       String @id @default(cuid())
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resumeId String
+  name     String
+  level    String // "Native", "Professional"
+  order    Int    @default(0)
+
+  @@map("resume_languages")
+}
+
+model ResumeTool {
+  id       String @id @default(cuid())
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resumeId String
+  name     String
+  order    Int    @default(0)
+
+  @@map("resume_tools")
+}
+
+model ResumeAchievement {
+  id       String @id @default(cuid())
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resumeId String
+  value    String // "40+", "99" — kept as string, mixed numeric/suffix display
+  label    String
+  order    Int    @default(0)
+
+  @@map("resume_achievements")
+}
+
+// Note: "topSkills" on the resume page and "RESUME_PROJECTS" are intentionally
+// NOT duplicated here — the resume loader will just pull top-N from Skill
+// (ordered by value) and featured Projects. One less place to keep in sync.
+
+// ============================================================================
+// PRICING
+// ============================================================================
+
+model PricingPlan {
+  id   String @id @default(cuid())
+  name String
+  desc String
+
+  // "one_time" | "monthly" — which price field below is the "primary" one to display
+  unit         String   @default("one_time")
+  priceOneTime Decimal? @db.Decimal(10, 2) // for Starter / Full Build style plans
+  priceMonthly Decimal? @db.Decimal(10, 2) // for retainer plans
+  priceProject Decimal? @db.Decimal(10, 2) // retainer's project-based alternative
+
+  featured Boolean          @default(false)
+  order    Int              @default(0)
+  features PricingFeature[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("pricing_plans")
+}
+
+model PricingFeature {
+  id     String      @id @default(cuid())
+  plan   PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  planId String
+  label  String
+  order  Int         @default(0)
+
+  @@index([planId])
+  @@map("pricing_features")
+}
+
+// ============================================================================
+// CONTACT SUBMISSIONS (the actual write path — /contact form action)
+// ============================================================================
+
+model ContactSubmission {
+  id      String  @id @default(cuid())
+  name    String
+  email   String
+  subject String?
+  message String  @db.Text
+
+  // free text to match the existing form's <select> options directly —
+  // "Under $500", "$500 – $1,000", ... and "Shopify theme", "Shopify app", ...
+  budget      String?
+  projectType String?
+
+  // "new" | "in_progress" | "responded" | "archived"
+  status String @default("new")
+
+  // optional: set when the submitter is a logged-in user (guests can still submit)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
+  // basic anti-spam / audit trail — cheap to add now, painful to retrofit later
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("contact_submissions")
+}
