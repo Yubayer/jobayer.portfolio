@@ -1,4 +1,5 @@
-import { index, route } from "@react-router/dev/routes";
+import { index, route, layout } from "@react-router/dev/routes";
+
 
 // Manual route table — every page lives under app/frontend/routes.
 export default [
